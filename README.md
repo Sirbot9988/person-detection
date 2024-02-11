@@ -14,10 +14,11 @@ Repo contains:
 
 When the example is flashing, you should see the GAP8 LED blink fast, which is the bootloader. The example itself can be noticed by a slow blinking LED. You should also receive the detection output in the cfclient console.
 
-## Dataset
+## Custom Model 
+### Dataset
 1. Download dataset from [Roboflow](https://universe.roboflow.com/wk-meyzk/safmc-nus) in Pascal VOC format.
 2. Extract them in `aideck-gap8-examples/examples/ai/detection/images/`.
 3. Run `python3 pascal_csv.py`.
 
-## Model Training
+### Training
 - Refer to `model.ipynb` to create `detection_q.tflite` model. Make sure tflite model is saved in `model/` folder.
