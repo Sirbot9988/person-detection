@@ -4,12 +4,8 @@ Repo contains:
 2. Quantising TFLite Model
 3. Generating Autotiler Code for AI-Deck implementation
 
-
-## Installation
-Clone into `aideck-gap8-examples/examples/ai/`
-
 ## Quickstart
-1. Clone repository into `aideck-gap8-examples/` folder
+1. Clone repository into `aideck-gap8-examples/examples/ai/` folder
 2. From a terminal with the docker container, or gap_sdk dev environment, in the `aideck-gap8-examples/` folder, execute:
    - ```docker run --rm -v ${PWD}:/module aideck-with-autotiler tools/build/make-example examples/ai/detection clean model build image```
 3. From another terminal (outside of the container), use the cfloader to flash the example if you have the gap8 bootloader flashed AIdeck. Change the [CRAZYFLIE URI] with your crazyflie URI like `radio://0/90/2M/E7E7E7E726`.
