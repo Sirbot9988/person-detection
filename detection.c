@@ -58,32 +58,31 @@ static void cam_handler(void *arg)
 
   short int max_value = Output_1[0];
   int max_index = 0;
-  for (int i = 1; i < 3; i++) {
+  for (int i = 0; i < 3; i++) {
       if (Output_1[i] > max_value) {
           max_value = Output_1[i];
           max_index = i;
       }
+      cpxPrintToConsole(LOG_TO_CRTP, "Output1: %hd\n", Output_1[i]);
   }
-
+  // for (int i = 0; i < (int)(sizeof(Output_1) / sizeof(Output_1[0])); i++) {
+  //     cpxPrintToConsole(LOG_TO_CRTP, "Output1: %hd\n", Output_1[i]);
+  //     }
+      
   cpxPrintToConsole(LOG_TO_CRTP, "Class Detected: %s\n", class_mapping[max_index]);
 
 
   // if (max_index != 0) { 
       char bbStr[100] = ""; // Initialize with an empty string
-      for (int i = 0; i < (int)(sizeof(Output_2) / sizeof(Output_2[0])); i++) {
+      for (int i = 0; i < 4; i++) {
           char bbtemp[50]; 
-          // float bb_val = (Output_2[i]-2)*0.003017221810296178;
-          // if (bb_val < 0) {
-          //   bb_val = 0; // Set negative values to zero
-          // }
-
-          sprintf(bbtemp, "%hhd ", Output_2[i]); 
+          sprintf(bbtemp, "%3d ", Output_2[i]); 
           strcat(bbStr, bbtemp); 
       }
       cpxPrintToConsole(LOG_TO_CRTP, "Bounding Box: %s\n", bbStr);
   // }
 
-  pi_camera_capture_async(&camera, cameraBuffer, CAM_HEIGHT * CAM_WIDTH, pi_task_callback(&task1, cam_handler, NULL));
+  pi_camera_capture_async(&camera, cameraBuffer, CAM_WIDTH * CAM_HEIGHT, pi_task_callback(&task1, cam_handler, NULL));
   pi_camera_control(&camera, PI_CAMERA_CMD_START, 0);
 }
 
@@ -179,7 +178,7 @@ int detection()
   }
   cpxPrintToConsole(LOG_TO_CRTP,"Opened Camera\n");
 
-  cameraBuffer = (unsigned char *)pmsis_l2_malloc((CAM_HEIGHT * CAM_WIDTH) * sizeof(signed char));
+  cameraBuffer = (unsigned char *)pmsis_l2_malloc((CAM_WIDTH * CAM_HEIGHT) * sizeof(unsigned char));
   if (cameraBuffer == NULL)
   {
     cpxPrintToConsole(LOG_TO_CRTP, "Failed Allocated memory for camera buffer\n");
@@ -231,7 +230,7 @@ int detection()
   cpxPrintToConsole(LOG_TO_CRTP,"Constructed CNN\n");
 
   pi_camera_control(&camera, PI_CAMERA_CMD_STOP, 0);
-  pi_camera_capture_async(&camera, cameraBuffer, CAM_HEIGHT * CAM_WIDTH , pi_task_callback(&task1, cam_handler, NULL));
+  pi_camera_capture_async(&camera, cameraBuffer, CAM_WIDTH * CAM_HEIGHT , pi_task_callback(&task1, cam_handler, NULL));
   pi_camera_control(&camera, PI_CAMERA_CMD_START, 0);
 
   while (1)
