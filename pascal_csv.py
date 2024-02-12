@@ -3,7 +3,7 @@ import glob
 import pandas as pd
 import xml.etree.ElementTree as ET
 
-SKIP_NEGATIVES = False
+SKIP_NEGATIVES = True
 NEGATIVE_CLASS = "none"
 
 def xml_to_csv(path, skipNegatives):
