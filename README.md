@@ -1,4 +1,7 @@
 # AI-Deck Object Detection
+
+![(http://url/to/img.png)](https://github.com/cweekiat/detection/blob/main/asset/Screenshot%20from%202024-02-19%2020-52-23.png)
+
 Repo contains: 
 1. Training a simple object detection model (MobileNetv2) 
 2. Quantising TFLite Model
