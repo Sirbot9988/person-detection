@@ -58,31 +58,34 @@ static void cam_handler(void *arg)
 
   short int max_value = Output_1[0];
   int max_index = 0;
+  char classStr[100] = ""; // Initialize with an empty string
   for (int i = 0; i < 3; i++) {
       if (Output_1[i] > max_value) {
           max_value = Output_1[i];
           max_index = i;
       }
-      cpxPrintToConsole(LOG_TO_CRTP, "Output1: %hd\n", Output_1[i]);
+      int Output_1_int = (int)Output_1[i];
+      char classtemp[50]; 
+      sprintf(classtemp, "%d ", Output_1_int); 
+      strcat(classStr, classtemp); 
   }
-  // for (int i = 0; i < (int)(sizeof(Output_1) / sizeof(Output_1[0])); i++) {
-  //     cpxPrintToConsole(LOG_TO_CRTP, "Output1: %hd\n", Output_1[i]);
-  //     }
-      
+  cpxPrintToConsole(LOG_TO_CRTP, "Output1: %s\n", classStr);
   cpxPrintToConsole(LOG_TO_CRTP, "Class Detected: %s\n", class_mapping[max_index]);
 
-
-  // if (max_index != 0) { 
+  if (max_index != 0) { 
       char bbStr[100] = ""; // Initialize with an empty string
       for (int i = 0; i < 4; i++) {
+          float Output_2_int = (float)Output_2[i]*0.00513695+0.66;
           char bbtemp[50]; 
-          sprintf(bbtemp, "%3d ", Output_2[i]); 
+          sprintf(bbtemp, "%.3f ", Output_2_int); 
           strcat(bbStr, bbtemp); 
+          // cpxPrintToConsole(LOG_TO_CRTP, "Output2: %d\n", (int)Output_2[i]);
+          // cpxPrintToConsole(LOG_TO_CRTP, "Output2: %.4f\n", (float)Output_2[i]);
       }
       cpxPrintToConsole(LOG_TO_CRTP, "Bounding Box: %s\n", bbStr);
-  // }
+  }
 
-  pi_camera_capture_async(&camera, cameraBuffer, CAM_WIDTH * CAM_HEIGHT, pi_task_callback(&task1, cam_handler, NULL));
+  pi_camera_capture_async(&camera, cameraBuffer, CAM_HEIGHT * CAM_WIDTH, pi_task_callback(&task1, cam_handler, NULL));
   pi_camera_control(&camera, PI_CAMERA_CMD_START, 0);
 }
 
@@ -178,7 +181,7 @@ int detection()
   }
   cpxPrintToConsole(LOG_TO_CRTP,"Opened Camera\n");
 
-  cameraBuffer = (unsigned char *)pmsis_l2_malloc((CAM_WIDTH * CAM_HEIGHT) * sizeof(unsigned char));
+  cameraBuffer = (unsigned char *)pmsis_l2_malloc((CAM_HEIGHT * CAM_WIDTH) * sizeof(unsigned char));
   if (cameraBuffer == NULL)
   {
     cpxPrintToConsole(LOG_TO_CRTP, "Failed Allocated memory for camera buffer\n");
@@ -186,21 +189,21 @@ int detection()
   }
   cpxPrintToConsole(LOG_TO_CRTP, "Allocated memory for camera buffer\n");
 
-  Output_1 = (signed short *)pmsis_l2_malloc(2 * sizeof(signed short));
+  Output_1 = (signed short *)pmsis_l2_malloc(3 * sizeof(signed short));
   if (Output_1 == NULL)
   {
     cpxPrintToConsole(LOG_TO_CRTP, "Failed to allocate memory for bounding box\n");
     pmsis_exit(-1);
   }
-  cpxPrintToConsole(LOG_TO_CRTP, "Allocated memory for output\n");
+  cpxPrintToConsole(LOG_TO_CRTP, "Allocated memory for output 1\n");
 
-  Output_2 = (signed char *)pmsis_l2_malloc(2 * sizeof(signed char));
+  Output_2 = (signed char *)pmsis_l2_malloc(4 * sizeof(signed char));
   if (Output_2 == NULL)
   {
     cpxPrintToConsole(LOG_TO_CRTP, "Failed to allocate memory for class\n");
     pmsis_exit(-1);
   }
-  cpxPrintToConsole(LOG_TO_CRTP, "Allocated memory for output\n");
+  cpxPrintToConsole(LOG_TO_CRTP, "Allocated memory for output 2\n");
 
 
   /* Configure CNN task */
@@ -230,7 +233,7 @@ int detection()
   cpxPrintToConsole(LOG_TO_CRTP,"Constructed CNN\n");
 
   pi_camera_control(&camera, PI_CAMERA_CMD_STOP, 0);
-  pi_camera_capture_async(&camera, cameraBuffer, CAM_WIDTH * CAM_HEIGHT , pi_task_callback(&task1, cam_handler, NULL));
+  pi_camera_capture_async(&camera, cameraBuffer, CAM_HEIGHT * CAM_WIDTH , pi_task_callback(&task1, cam_handler, NULL));
   pi_camera_control(&camera, PI_CAMERA_CMD_START, 0);
 
   while (1)
