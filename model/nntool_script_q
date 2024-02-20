@@ -1,19 +1,19 @@
 set debug true
 #imageformat input_1 rgb888
 #set input_transpose True
-#imageformat input_1 rgb888 offset_int8
+#imageformat input_1 bw8 offset_int8
 #set adjust_order True
 #set input_width 324
 #set input_height 244
 #set_input_divisor 255
 show
 adjust
+fusions --scale8
 # imageformat input_1 rgb888 offset_int8
 # imageformat input_1 rgb888 shift_int8
-aquant samples/raw/* --scheme SQ8
-# -T -H 61 -W 81 -f 8
+aquant samples/output/*.png --scheme SQ8
+#-T -f 8
 #qshow
-fusions --scale8
 adjust
 # qshow
 # --- RUN INFERENCE ---
