@@ -4,6 +4,8 @@
 
 #include "detection.h"
 #include "bsp/camera/himax.h"
+#include "bsp/ai_deck.h"
+#include "bsp/buffer.h"
 #include "bsp/transport/nina_w10.h"
 #include "detectionKernels.h"
 #include "gaplib/ImgIO.h"
@@ -11,6 +13,7 @@
 #include "stdio.h"
 #include "bsp/bsp.h"
 #include "cpx.h"
+
 
 #define CAM_WIDTH 324
 #define CAM_HEIGHT 244
@@ -38,7 +41,9 @@ static struct pi_cluster_conf cluster_conf;
 AT_HYPERFLASH_FS_EXT_ADDR_TYPE __PREFIX(_L3_Flash) = 0;
 
 #define IMG_ORIENTATION 0x0101
-
+uint8_t set_value2 = 1;
+uint8_t set_value3 = 16;
+uint8_t set_value4 = 1;
 
 static void RunNetwork()
 {
@@ -79,14 +84,10 @@ static void cam_handler(void *arg)
       }
       cpxPrintToConsole(LOG_TO_CRTP, "Bounding Box: %s\n", bbStr);
   }
-
-  // himax_set_register(0x2100, 0x1); // AE_CTRL
-  // himax_set_register(0x0205, 0x10); // ANALOG_GLOBAL_GAIN: 0x10 = 2x, 0x20 = 4x
-  
-  // // This is needed for the camera to actually update its registers.
-  // himax_set_register(0x0104, 0x1);
-  
-  pi_camera_capture_async(&camera, cameraBuffer, CAM_HEIGHT * CAM_WIDTH, pi_task_callback(&task1, cam_handler, NULL));
+  pi_camera_reg_set(&camera, 0x2100, &set_value2); // AE_CTRL
+  pi_camera_reg_set(&camera, 0x0205, &set_value3); // ANALOG_GLOBAL_GAIN: 0x10 = 2x, 0x20 = 4x
+  pi_camera_reg_set(&camera, 0x0104, &set_value4); // This is needed for the camera to actually update its registers.
+  pi_camera_capture_async(&camera, cameraBuffer, CAM_HEIGHT * CAM_WIDTH, 		pi_task_callback(&task1, cam_handler, NULL));
   pi_camera_control(&camera, PI_CAMERA_CMD_START, 0);
 }
 
@@ -234,11 +235,11 @@ int detection()
   cpxPrintToConsole(LOG_TO_CRTP,"Constructed CNN\n");
 
   pi_camera_control(&camera, PI_CAMERA_CMD_STOP, 0);
-  // himax_set_register(0x2100, 0x1); // AE_CTRL
-  // himax_set_register(0x0205, 0x10); // ANALOG_GLOBAL_GAIN: 0x10 = 2x, 0x20 = 4x
+
+  pi_camera_reg_set(&camera, 0x2100, &set_value2); // AE_CTRL
+  pi_camera_reg_set(&camera, 0x0205, &set_value3); // ANALOG_GLOBAL_GAIN: 0x10 = 2x, 0x20 = 4x
+  pi_camera_reg_set(&camera, 0x0104, &set_value4); // This is needed for the camera to actually update its registers.
   
-  // // This is needed for the camera to actually update its registers.
-  // himax_set_register(0x0104, 0x1);
   pi_camera_capture_async(&camera, cameraBuffer, CAM_HEIGHT * CAM_WIDTH , pi_task_callback(&task1, cam_handler, NULL));
   pi_camera_control(&camera, PI_CAMERA_CMD_START, 0);
 
