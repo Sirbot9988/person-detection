@@ -30,9 +30,6 @@ static signed char *Output_2; // Bounding Box
 
 const char *class_mapping[] = {"none", "ball", "cone"};
 
-float quantization_factor1 = 0.00390625; 
-float quantization_factor2 = 0.003017221810296178;
-
 static struct pi_device camera;
 static struct pi_device cluster_dev;
 static struct pi_cluster_task *task;
@@ -58,7 +55,7 @@ static void cam_handler(void *arg)
 
   short int max_value = Output_1[0];
   int max_index = 0;
-  char classStr[100] = ""; // Initialize with an empty string
+  char classStr[100] = ""; 
   for (int i = 0; i < 3; i++) {
       if (Output_1[i] > max_value) {
           max_value = Output_1[i];
@@ -73,14 +70,12 @@ static void cam_handler(void *arg)
   cpxPrintToConsole(LOG_TO_CRTP, "Class Detected: %s\n", class_mapping[max_index]);
 
   if (max_index != 0) { 
-      char bbStr[100] = ""; // Initialize with an empty string
+      char bbStr[100] = ""; 
       for (int i = 0; i < 4; i++) {
-          float Output_2_int = (float)Output_2[i]*0.00513695+0.66;
+          float Output_2_int = (float)Output_2[i]*0.00592281;
           char bbtemp[50]; 
           sprintf(bbtemp, "%.3f ", Output_2_int); 
           strcat(bbStr, bbtemp); 
-          // cpxPrintToConsole(LOG_TO_CRTP, "Output2: %d\n", (int)Output_2[i]);
-          // cpxPrintToConsole(LOG_TO_CRTP, "Output2: %.4f\n", (float)Output_2[i]);
       }
       cpxPrintToConsole(LOG_TO_CRTP, "Bounding Box: %s\n", bbStr);
   }
