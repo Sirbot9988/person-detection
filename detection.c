@@ -80,11 +80,11 @@ static void cam_handler(void *arg)
       cpxPrintToConsole(LOG_TO_CRTP, "Bounding Box: %s\n", bbStr);
   }
 
-  himax_set_register(0x2100, 0x1); // AE_CTRL
-  himax_set_register(0x0205, 0x10); // ANALOG_GLOBAL_GAIN: 0x10 = 2x, 0x20 = 4x
+  // himax_set_register(0x2100, 0x1); // AE_CTRL
+  // himax_set_register(0x0205, 0x10); // ANALOG_GLOBAL_GAIN: 0x10 = 2x, 0x20 = 4x
   
-  // This is needed for the camera to actually update its registers.
-  himax_set_register(0x0104, 0x1);
+  // // This is needed for the camera to actually update its registers.
+  // himax_set_register(0x0104, 0x1);
   
   pi_camera_capture_async(&camera, cameraBuffer, CAM_HEIGHT * CAM_WIDTH, pi_task_callback(&task1, cam_handler, NULL));
   pi_camera_control(&camera, PI_CAMERA_CMD_START, 0);
@@ -234,11 +234,11 @@ int detection()
   cpxPrintToConsole(LOG_TO_CRTP,"Constructed CNN\n");
 
   pi_camera_control(&camera, PI_CAMERA_CMD_STOP, 0);
-  himax_set_register(0x2100, 0x1); // AE_CTRL
-  himax_set_register(0x0205, 0x10); // ANALOG_GLOBAL_GAIN: 0x10 = 2x, 0x20 = 4x
+  // himax_set_register(0x2100, 0x1); // AE_CTRL
+  // himax_set_register(0x0205, 0x10); // ANALOG_GLOBAL_GAIN: 0x10 = 2x, 0x20 = 4x
   
-  // This is needed for the camera to actually update its registers.
-  himax_set_register(0x0104, 0x1);
+  // // This is needed for the camera to actually update its registers.
+  // himax_set_register(0x0104, 0x1);
   pi_camera_capture_async(&camera, cameraBuffer, CAM_HEIGHT * CAM_WIDTH , pi_task_callback(&task1, cam_handler, NULL));
   pi_camera_control(&camera, PI_CAMERA_CMD_START, 0);
 
