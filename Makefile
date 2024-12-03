@@ -19,15 +19,15 @@ APP_CFLAGS += -DMODEL_QUANTIZED
 
 # load the model pre-quantized by TensorFlow
 # if set to false, will quantize using images from the /samples folder
-MODEL_PREQUANTIZED = true
+MODEL_PREQUANTIZED = false
 
 ifeq "$(MODEL_PREQUANTIZED)" "true"
   NNTOOL_EXTRA_FLAGS = -q
   NNTOOL_SCRIPT=model/nntool_script
-  TRAINED_MODEL=model/detection_q.tflite
+  TRAINED_MODEL=model/detection.onnx
 else
   NNTOOL_SCRIPT=model/nntool_script_q
-  TRAINED_MODEL=model/detection.tflite
+  TRAINED_MODEL=model/detection.onnx
 endif
 
 QUANT_BITS=8

@@ -23,13 +23,9 @@ endif
 
 MODEL_PYTHON=python3
 
-ifeq ($(ONNX), 1)
-  TRAINED_MODEL ?= model/$(MODEL_PREFIX).onnx
-  MODEL_PATH     = $(MODEL_BUILD)/$(MODEL_PREFIX).onnx
-else
-  TRAINED_MODEL ?= model/$(MODEL_PREFIX).tflite
-  MODEL_PATH     = $(MODEL_BUILD)/$(MODEL_PREFIX).tflite
-endif
+TRAINED_MODEL ?= model/$(MODEL_PREFIX).onnx
+MODEL_PATH     = $(MODEL_BUILD)/$(MODEL_PREFIX).onnx
+
 MODEL_COMMON ?= common
 MODEL_COMMON_INC ?= $(GAP_SDK_HOME)/libs/gap_lib/include
 MODEL_COMMON_SRC ?= $(GAP_SDK_HOME)/libs/gap_lib/img_io

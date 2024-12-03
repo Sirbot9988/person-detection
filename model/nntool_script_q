@@ -11,7 +11,7 @@ adjust
 fusions --scale8
 # imageformat input_1 rgb888 offset_int8
 # imageformat input_1 rgb888 shift_int8
-aquant samples/output/*.png --scheme SQ8
+aquant samples/output/*.jpeg --scheme SQ8
 #-T -f 8
 #qshow
 adjust
@@ -23,4 +23,4 @@ adjust
 #tensors -t float quant
 #tensors -t float quant -Q
 qerror samples/*
-save_state
+save_state 
