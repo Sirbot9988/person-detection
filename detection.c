@@ -68,30 +68,44 @@ static void RunNetwork()
 
 static void cam_handler(void *arg)
 {
+    cpxPrintToConsole(LOG_TO_CRTP, "cam_handler called\n");
+
     pi_camera_control(&camera, PI_CAMERA_CMD_STOP, 0);
 
-    // Resize the captured image
+    // call image resizer function
+    cpxPrintToConsole(LOG_TO_CRTP, "Resizing image\n");
     resize_image(cameraBufferFull, cameraBufferResized, CAM_FULL_WIDTH, CAM_FULL_HEIGHT, CAM_WIDTH, CAM_HEIGHT);
 
-    /* Run inference */
-    pi_cluster_send_task_to_cl(&cluster_dev, task);
+    // inference
+    cpxPrintToConsole(LOG_TO_CRTP, "Running neural network inference\n");
+    int cluster_ret = pi_cluster_send_task_to_cl(&cluster_dev, task);
+    if (cluster_ret)
+    {
+        cpxPrintToConsole(LOG_TO_CRTP, "Failed to send task to cluster: %d\n", cluster_ret);
+    }
+    else
+    {
+        cpxPrintToConsole(LOG_TO_CRTP, "Cluster task executed successfully\n");
+    }
 
-    // Process Output_1 (confidence score)
-    // Assuming Output_1[0] is in Q15 format [-32768, 32767]
+    // print raw outputs for debugging
+    cpxPrintToConsole(LOG_TO_CRTP, "Raw Output_1 value: %d\n", Output_1[0]);
+    cpxPrintToConsole(LOG_TO_CRTP, "Raw Output_2 values: %d %d %d %d\n",
+                      Output_2[0], Output_2[1], Output_2[2], Output_2[3]);
+
+    // Process neural network outputs
+    cpxPrintToConsole(LOG_TO_CRTP, "Processing neural network outputs\n");
     float confidence = (float)Output_1[0] / 32768.0f;  // Map to [-1, 1]
     confidence = (confidence + 1.0f) / 2.0f;           // Map to [0, 1]
-
-    cpxPrintToConsole(LOG_TO_CRTP, "Confidence score: %.3f\n", confidence);
-
-    float threshold = 0.5f; // Detection threshold
-
+    cpxPrintToConsole(LOG_TO_CRTP, "Confidence: %.3f\n", confidence);
+    float threshold = 0.5f;
     if (confidence >= threshold)
     {
-        // Object detected, process bounding box
+        // if object detected has higher confidence than threshhold
         char bbStr[100] = "";
         for (int i = 0; i < 4; i++)
         {
-            // Assuming Output_2[i] is in Q7 format [-128, 127]
+            // Is output2 
             float bbox_value = (float)Output_2[i] / 128.0f; // Map to [-1, 1]
             bbox_value = (bbox_value + 1.0f) / 2.0f;        // Map to [0, 1]
             char bbtemp[50];
@@ -168,7 +182,7 @@ int detection()
     // pi_freq_set(PI_FREQ_DOMAIN_CL, FREQ_CL*1000*1000);
     pi_pmu_voltage_set(PI_PMU_DOMAIN_FC, 1200);
 
-    // For debugging
+    // debug uart connections
     struct pi_uart_conf uart_conf;
     struct pi_device device;
     pi_uart_conf_init(&uart_conf);
