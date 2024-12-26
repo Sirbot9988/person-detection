@@ -23,7 +23,11 @@ AT_HYPERFLASH_FS_EXT_ADDR_TYPE detection_L3_Flash = 0;
 #define CAM_FULL_HEIGHT  244
 #define CAM_WIDTH        80
 #define CAM_HEIGHT       48
+
 #define IMG_ORIENTATION  0x0101
+
+// We want 5 objects:
+#define MAX_OBJECTS      5
 
 #ifndef STACK_SIZE
 #define STACK_SIZE       (1024 * 2)
@@ -34,7 +38,7 @@ AT_HYPERFLASH_FS_EXT_ADDR_TYPE detection_L3_Flash = 0;
 #endif
 
 #define LED_PIN          2
-#define THRESHOLD        0.5f
+#define THRESHOLD        0.0f  // Confidence threshold
 #define JPEG_BUFFER_SIZE (50 * 1024) // Adjust if needed
 
 static EventGroupHandle_t evGroup;
@@ -98,18 +102,15 @@ static void DrawRectangle(unsigned char *img, int img_w, int img_h, int x, int y
     if (x2 >= img_w) x2 = img_w - 1;
     if (y2 >= img_h) y2 = img_h - 1;
 
-    // Draw top and bottom edges
     for (int X = x; X <= x2; X++)
     {
-        if (y >= 0 && y < img_h) img[y * img_w + X] = 255;    // top edge
-        if (y2 >= 0 && y2 < img_h) img[y2 * img_w + X] = 255; // bottom edge
+        if (y >= 0 && y < img_h) img[y * img_w + X] = 255;  
+        if (y2 >= 0 && y2 < img_h) img[y2 * img_w + X] = 255; 
     }
-
-    // Draw left and right edges
     for (int Y = y; Y <= y2; Y++)
     {
-        if (x >= 0 && x < img_w) img[Y * img_w + x] = 255;     // left edge
-        if (x2 >= 0 && x2 < img_w) img[Y * img_w + x2] = 255;  // right edge
+        if (x >= 0 && x < img_w) img[Y * img_w + x] = 255;     
+        if (x2 >= 0 && x2 < img_w) img[Y * img_w + x2] = 255;  
     }
 }
 
@@ -243,48 +244,51 @@ static void resize_image(unsigned char *src, unsigned char *dst, int src_w, int 
         }
     }
 }
-
 static void cam_handler(void *arg)
 {
     (void)arg;
-    cpxPrintToConsole(LOG_TO_CRTP, "cam_handler called\n");
     pi_camera_control(&camera, PI_CAMERA_CMD_STOP, 0);
 
-    // Resize for inference
-    cpxPrintToConsole(LOG_TO_CRTP, "Resizing image\n");
+    // 1) Resize
     resize_image(cameraBufferFull, cameraBufferResized, CAM_FULL_WIDTH, CAM_FULL_HEIGHT, CAM_WIDTH, CAM_HEIGHT);
 
-    // Run inference
-    cpxPrintToConsole(LOG_TO_CRTP, "Running neural network inference\n");
+    // 2) Run network
     pi_cluster_send_task_to_cl(&cluster_dev, task);
 
-    // Process outputs (Q7)
-    cpxPrintToConsole(LOG_TO_CRTP, "Processing neural network outputs\n");
-    float confidence = ((float)Output_1[0] / 128.0f + 1.0f) / 2.0f;
-    cpxPrintToConsole(LOG_TO_CRTP, "Confidence: %.3f\n", confidence);
 
-    if (confidence >= THRESHOLD)
+    int foundAny = 0;
+    for (int i = 0; i < MAX_OBJECTS; i++)
     {
-        float x_min = ((float)Output_2[0] / 128.0f + 1.0f) / 2.0f;
-        float y_min = ((float)Output_2[1] / 128.0f + 1.0f) / 2.0f;
-        float x_max = ((float)Output_2[2] / 128.0f + 1.0f) / 2.0f;
-        float y_max = ((float)Output_2[3] / 128.0f + 1.0f) / 2.0f;
+        // Convert Q7 => float in [0,1]
+        float confidence = ((float)Output_1[i] / 128.0f + 1.0f) / 2.0f;
 
-        cpxPrintToConsole(LOG_TO_CRTP, "Detected Object: x_min=%.3f, y_min=%.3f, x_max=%.3f, y_max=%.3f\n",
-                          x_min, y_min, x_max, y_max);
+        if (confidence >= THRESHOLD)
+        {
+            foundAny = 1;
+            // TODO: Chane this to YOLO format
+            int offset = i * 4; 
+            float x_min = ((float)Output_2[offset + 0] / 128.0f + 1.0f) / 2.0f;
+            float y_min = ((float)Output_2[offset + 1] / 128.0f + 1.0f) / 2.0f;
+            float x_max = ((float)Output_2[offset + 2] / 128.0f + 1.0f) / 2.0f;
+            float y_max = ((float)Output_2[offset + 3] / 128.0f + 1.0f) / 2.0f;
 
-        // Convert normalized coordinates to pixel coordinates
-        int x = (int)(x_min * CAM_FULL_WIDTH);
-        int y = (int)(y_min * CAM_FULL_HEIGHT);
-        int w = (int)((x_max - x_min) * CAM_FULL_WIDTH);
-        int h = (int)((y_max - y_min) * CAM_FULL_HEIGHT);
+            cpxPrintToConsole(LOG_TO_CRTP,
+                "Obj %d: conf=%.3f => x_min=%.3f, y_min=%.3f, x_max=%.3f, y_max=%.3f\n",
+                i, confidence, x_min, y_min, x_max, y_max);
 
-        // bbox is written on cameraBufferFull for drawing onto the image
-        DrawRectangle(cameraBufferFull, CAM_FULL_WIDTH, CAM_FULL_HEIGHT, x, y, w, h);
+            int px   = (int)(x_min * CAM_FULL_WIDTH);
+            int py   = (int)(y_min * CAM_FULL_HEIGHT);
+            int pw   = (int)((x_max - x_min) * CAM_FULL_WIDTH);
+            int ph   = (int)((y_max - y_min) * CAM_FULL_HEIGHT);
+
+            // Draw bounding box onto cameraBufferFull
+            DrawRectangle(cameraBufferFull, CAM_FULL_WIDTH, CAM_FULL_HEIGHT, px, py, pw, ph);
+        }
     }
-    else
+
+    if (!foundAny)
     {
-        cpxPrintToConsole(LOG_TO_CRTP, "No object detected.\n");
+        cpxPrintToConsole(LOG_TO_CRTP, "No objects above threshold.\n");
     }
 
     if (wifiClientConnected == 1)
@@ -371,14 +375,14 @@ static void camera_task(void *parameters)
         return;
     }
 
-    Output_1 = (signed char *)pmsis_l2_malloc(sizeof(signed char));
+    Output_1 = (signed char *)pmsis_l2_malloc(MAX_OBJECTS * sizeof(signed char));
     if (!Output_1)
     {
         cpxPrintToConsole(LOG_TO_CRTP, "Failed to allocate Output_1\n");
         return;
     }
 
-    Output_2 = (signed char *)pmsis_l2_malloc(4 * sizeof(signed char));
+    Output_2 = (signed char *)pmsis_l2_malloc(4 * MAX_OBJECTS * sizeof(signed char));
     if (!Output_2)
     {
         cpxPrintToConsole(LOG_TO_CRTP, "Failed to allocate Output_2\n");
@@ -483,7 +487,7 @@ void start_example(void)
 
     cpxInit();
     cpxEnableFunction(CPX_F_WIFI_CTRL);
-    cpxPrintToConsole(LOG_TO_CRTP, "-- Detection JPEG example with Bounding Box --\n");
+    cpxPrintToConsole(LOG_TO_CRTP, "-- PERSON DETECTION --\n");
 
     evGroup = xEventGroupCreate();
 
