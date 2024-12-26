@@ -21,8 +21,8 @@ AT_HYPERFLASH_FS_EXT_ADDR_TYPE detection_L3_Flash = 0;
 
 #define CAM_FULL_WIDTH   324
 #define CAM_FULL_HEIGHT  244
-#define CAM_WIDTH        80
-#define CAM_HEIGHT       48
+#define CAM_WIDTH        324
+#define CAM_HEIGHT       244
 
 #define IMG_ORIENTATION  0x0101
 
@@ -92,25 +92,33 @@ typedef enum
 static StreamerMode_t streamerMode = JPEG_ENCODING;
 
 // draw 255 (white) on the edges of the bounding box.
-static void DrawRectangle(unsigned char *img, int img_w, int img_h, int x, int y, int w, int h)
+static void DrawRectangle(unsigned char *img, int img_w, int img_h,
+                          int x, int y, int w, int h)
 {
+    /* This draws a white (255) rectangle boundary onto 'img' at coords (x,y,w,h). */
     int x2 = x + w;
     int y2 = y + h;
 
-    if (x < 0) x = 0;
-    if (y < 0) y = 0;
-    if (x2 >= img_w) x2 = img_w - 1;
-    if (y2 >= img_h) y2 = img_h - 1;
+    if (x < 0)   x = 0;
+    if (y < 0)   y = 0;
+    if (x2 >= img_w)  x2 = img_w - 1;
+    if (y2 >= img_h)  y2 = img_h - 1;
 
+    // Top & bottom edges
     for (int X = x; X <= x2; X++)
     {
-        if (y >= 0 && y < img_h) img[y * img_w + X] = 255;  
-        if (y2 >= 0 && y2 < img_h) img[y2 * img_w + X] = 255; 
+        if (y >= 0 && y < img_h)
+            img[y * img_w + X] = 255;    // top edge
+        if (y2 >= 0 && y2 < img_h)
+            img[y2 * img_w + X] = 255;   // bottom edge
     }
+    // Left & right edges
     for (int Y = y; Y <= y2; Y++)
     {
-        if (x >= 0 && x < img_w) img[Y * img_w + x] = 255;     
-        if (x2 >= 0 && x2 < img_w) img[Y * img_w + x2] = 255;  
+        if (x >= 0 && x < img_w)
+            img[Y * img_w + x] = 255;    // left edge
+        if (x2 >= 0 && x2 < img_w)
+            img[Y * img_w + x2] = 255;   // right edge
     }
 }
 
@@ -249,48 +257,62 @@ static void cam_handler(void *arg)
     (void)arg;
     pi_camera_control(&camera, PI_CAMERA_CMD_STOP, 0);
 
-    // 1) Resize
-    resize_image(cameraBufferFull, cameraBufferResized, CAM_FULL_WIDTH, CAM_FULL_HEIGHT, CAM_WIDTH, CAM_HEIGHT);
+    // 1) Resize the full image to your CNN input
+    resize_image(cameraBufferFull, cameraBufferResized,
+                 CAM_FULL_WIDTH, CAM_FULL_HEIGHT,
+                 CAM_WIDTH, CAM_HEIGHT);
 
-    // 2) Run network
+    // 2) Run inference on cluster
     pi_cluster_send_task_to_cl(&cluster_dev, task);
 
-
+    // 3) Parse up to MAX_OBJECTS predictions
     int foundAny = 0;
     for (int i = 0; i < MAX_OBJECTS; i++)
     {
-        // Convert Q7 => float in [0,1]
+        // Convert Q7 => float in [0..1]
         float confidence = ((float)Output_1[i] / 128.0f + 1.0f) / 2.0f;
 
-        if (confidence >= THRESHOLD)
+        if (confidence >= THRESHOLD)  // e.g. 0.5
         {
             foundAny = 1;
-            // TODO: Chane this to YOLO format
-            int offset = i * 4; 
-            float x_min = ((float)Output_2[offset + 0] / 128.0f + 1.0f) / 2.0f;
-            float y_min = ((float)Output_2[offset + 1] / 128.0f + 1.0f) / 2.0f;
-            float x_max = ((float)Output_2[offset + 2] / 128.0f + 1.0f) / 2.0f;
-            float y_max = ((float)Output_2[offset + 3] / 128.0f + 1.0f) / 2.0f;
+
+            /* YOLO format => (x_center, y_center, width, height) in [0..1].
+               Suppose Output_2 has 4 coords per object, in order:
+               offset+0 => x_center, offset+1 => y_center,
+               offset+2 => width,    offset+3 => height */
+            int offset = i * 4;
+
+            float x_c  = ((float)Output_2[offset + 0] / 128.0f + 1.0f) / 2.0f;
+            float y_c  = ((float)Output_2[offset + 1] / 128.0f + 1.0f) / 2.0f;
+            float w_n  = ((float)Output_2[offset + 2] / 128.0f + 1.0f) / 2.0f;
+            float h_n  = ((float)Output_2[offset + 3] / 128.0f + 1.0f) / 2.0f;
+
+            // Convert normalized YOLO coords => top-left pixel coords + width/height
+            float x_min = x_c - w_n * 0.5f;
+            float x_max = x_c + w_n * 0.5f;
+            float y_min = y_c - h_n * 0.5f;
+            float y_max = y_c + h_n * 0.5f;
+
+            // Scale to image resolution
+            int px = (int)(x_min * CAM_FULL_WIDTH);
+            int py = (int)(y_min * CAM_FULL_HEIGHT);
+            int pw = (int)((x_max - x_min) * CAM_FULL_WIDTH);
+            int ph = (int)((y_max - y_min) * CAM_FULL_HEIGHT);
 
             cpxPrintToConsole(LOG_TO_CRTP,
-                "Obj %d: conf=%.3f => x_min=%.3f, y_min=%.3f, x_max=%.3f, y_max=%.3f\n",
-                i, confidence, x_min, y_min, x_max, y_max);
+                "Obj %d: conf=%.3f => YOLO x_c=%.3f, y_c=%.3f, w=%.3f, h=%.3f, =>Rect px=%d py=%d pw=%d ph=%d\n",
+                i, confidence, x_c, y_c, w_n, h_n, px, py, pw, ph);
 
-            int px   = (int)(x_min * CAM_FULL_WIDTH);
-            int py   = (int)(y_min * CAM_FULL_HEIGHT);
-            int pw   = (int)((x_max - x_min) * CAM_FULL_WIDTH);
-            int ph   = (int)((y_max - y_min) * CAM_FULL_HEIGHT);
-
-            // Draw bounding box onto cameraBufferFull
-            DrawRectangle(cameraBufferFull, CAM_FULL_WIDTH, CAM_FULL_HEIGHT, px, py, pw, ph);
+            // 4) Draw bounding box onto the full camera buffer (for Wi-Fi streaming)
+            DrawRectangle(cameraBufferFull, CAM_FULL_WIDTH, CAM_FULL_HEIGHT,
+                          px, py, pw, ph);
         }
     }
 
     if (!foundAny)
     {
-        cpxPrintToConsole(LOG_TO_CRTP, "No objects above threshold.\n");
+        cpxPrintToConsole(LOG_TO_CRTP, "No objects above threshold\n");
     }
-
     if (wifiClientConnected == 1)
     {
         cpxPrintToConsole(LOG_TO_CRTP, "Encoding image as JPEG\n");
