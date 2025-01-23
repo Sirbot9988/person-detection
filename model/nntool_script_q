@@ -11,7 +11,7 @@ adjust
 fusions --pow2
 # imageformat input_1 rgb888 offset_int8
 # imageformat input_1 rgb888 shift_int8
-aquant samples/output/*.jpeg -T
+aquant samples/output/*.png -T
 #-T -f 8
 #qshow
 adjust

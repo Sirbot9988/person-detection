@@ -69,24 +69,25 @@ def rx_bytes(size):
 
 import cv2
 
-stream_w = 160
-stream_h = 120
+stream_w = 324
+stream_h = 244
 
 start = time.time()
 count = 0
 
 while(1):
     # First get the info
+    print("Waiting for packet...")
     packetInfoRaw = rx_bytes(4)
-    #print(packetInfoRaw)
+    print(packetInfoRaw)
     [length, routing, function] = struct.unpack('<HBB', packetInfoRaw)
-    #print("Length is {}".format(length))
-    #print("Route is 0x{:02X}->0x{:02X}".format(routing & 0xF, routing >> 4))
-    #print("Function is 0x{:02X}".format(function))
+    print("Length is {}".format(length))
+    print("Route is 0x{:02X}->0x{:02X}".format(routing & 0xF, routing >> 4))
+    print("Function is 0x{:02X}".format(function))
 
     imgHeader = rx_bytes(length - 2)
-    #print(imgHeader)
-    #print("Length of data is {}".format(len(imgHeader)))
+    print(imgHeader)
+    print("Length of data is {}".format(len(imgHeader)))
     [magic, width, height, depth, format, size] = struct.unpack('<BHHBBI', imgHeader)
 
     if magic == 0xBC:

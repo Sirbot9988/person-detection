@@ -1,7 +1,8 @@
 /* 
 CURRENT ISSUES: 
-The bounding box is not being drawn on the image. The values of Output_1 and Output_2 are not changing.
-Connection to radio is not great. Possibly because the large amount of debug outputs and its frequency being sent may be limiting bandwidth. 
+Execution of cam handler is too slow. Perhaps running through all the patches is too costly. 
+- Try increasing stride.
+- OR Parallel Computing 
 */
 
 #include "stdio.h"
@@ -26,8 +27,10 @@ AT_HYPERFLASH_FS_EXT_ADDR_TYPE detection_L3_Flash = 0;
 
 #define IMG_ORIENTATION  0x0101
 
-// We want 5 objects:
-#define MAX_OBJECTS      5
+// Detection parameters
+#define PATCH_SIZE       64
+#define STRIDE           32  
+#define THRESHOLD        0.0f
 
 #ifndef STACK_SIZE
 #define STACK_SIZE       (1024 * 2)
@@ -38,7 +41,6 @@ AT_HYPERFLASH_FS_EXT_ADDR_TYPE detection_L3_Flash = 0;
 #endif
 
 #define LED_PIN          2
-#define THRESHOLD        0.0f  // Confidence threshold
 #define JPEG_BUFFER_SIZE (50 * 1024) // Adjust if needed
 
 static EventGroupHandle_t evGroup;
@@ -52,9 +54,8 @@ static CPXPacket_t rxp;
 static CPXPacket_t txp;
 
 static unsigned char *cameraBufferFull;
-static unsigned char *cameraBufferResized; 
+static signed char *patchBuffer;
 static signed char *Output_1; // Q7 ? Re-examine 
-static signed char *Output_2; // Q7 ? Re-examine if this is Q7 or Q15. Might be the cause of no changing values issues.
 
 static struct pi_device camera;
 static struct pi_device cluster_dev;
@@ -72,6 +73,11 @@ static uint32_t footerSize;
 static pi_buffer_t jpeg_data;
 static uint32_t jpegSize;
 static pi_buffer_t buffer;
+
+// Parallel Computing Arguments 
+// Add parallel processing parameters
+#define NUM_CORES      8
+#define PATCHES_PER_CORE (NUM_PATCHES / NUM_CORES)
 
 typedef struct
 {
@@ -235,7 +241,7 @@ static int open_camera(struct pi_device *device)
 
 static void RunNetwork()
 {
-    __PREFIX(CNN)((signed char *)cameraBufferResized, Output_1, Output_2);
+    __PREFIX(CNN)((signed char *)patchBuffer, Output_1);
 }
 
 static void resize_image(unsigned char *src, unsigned char *dst, int src_w, int src_h, int dst_w, int dst_h)
@@ -252,61 +258,44 @@ static void resize_image(unsigned char *src, unsigned char *dst, int src_w, int 
         }
     }
 }
+
 static void cam_handler(void *arg)
 {
     (void)arg;
     pi_camera_control(&camera, PI_CAMERA_CMD_STOP, 0);
 
     // 1) Resize the full image to your CNN input
-    resize_image(cameraBufferFull, cameraBufferResized,
-                 CAM_FULL_WIDTH, CAM_FULL_HEIGHT,
-                 CAM_WIDTH, CAM_HEIGHT);
+    // resize_image(cameraBufferFull, cameraBufferResized,
+    //              CAM_FULL_WIDTH, CAM_FULL_HEIGHT,
+    //              CAM_WIDTH, CAM_HEIGHT);
 
-    // 2) Run inference on cluster
-    pi_cluster_send_task_to_cl(&cluster_dev, task);
 
     // 3) Parse up to MAX_OBJECTS predictions
     int foundAny = 0;
-    for (int i = 0; i < MAX_OBJECTS; i++)
-    {
-        // Convert Q7 => float in [0..1]
-        float confidence = ((float)Output_1[i] / 128.0f + 1.0f) / 2.0f;
 
-        if (confidence >= THRESHOLD)  // e.g. 0.5
-        {
-            foundAny = 1;
-
-            /* YOLO format => (x_center, y_center, width, height) in [0..1].
-               Suppose Output_2 has 4 coords per object, in order:
-               offset+0 => x_center, offset+1 => y_center,
-               offset+2 => width,    offset+3 => height */
-            int offset = i * 4;
-
-            float x_c  = ((float)Output_2[offset + 0] / 128.0f + 1.0f) / 2.0f;
-            float y_c  = ((float)Output_2[offset + 1] / 128.0f + 1.0f) / 2.0f;
-            float w_n  = ((float)Output_2[offset + 2] / 128.0f + 1.0f) / 2.0f;
-            float h_n  = ((float)Output_2[offset + 3] / 128.0f + 1.0f) / 2.0f;
-
-            // Convert normalized YOLO coords => top-left pixel coords + width/height
-            float x_min = x_c - w_n * 0.5f;
-            float x_max = x_c + w_n * 0.5f;
-            float y_min = y_c - h_n * 0.5f;
-            float y_max = y_c + h_n * 0.5f;
-
-            // Scale to image resolution
-            int px = (int)(x_min * CAM_FULL_WIDTH);
-            int py = (int)(y_min * CAM_FULL_HEIGHT);
-            int pw = (int)((x_max - x_min) * CAM_FULL_WIDTH);
-            int ph = (int)((y_max - y_min) * CAM_FULL_HEIGHT);
-
-            cpxPrintToConsole(LOG_TO_CRTP,
-                "Obj %d: conf=%.3f => YOLO x_c=%.3f, y_c=%.3f, w=%.3f, h=%.3f, =>Rect px=%d py=%d pw=%d ph=%d\n",
-                i, confidence, x_c, y_c, w_n, h_n, px, py, pw, ph);
-
-            // 4) Draw bounding box onto the full camera buffer (for Wi-Fi streaming)
-            DrawRectangle(cameraBufferFull, CAM_FULL_WIDTH, CAM_FULL_HEIGHT,
-                          px, py, pw, ph);
+    for (int y = 0; y <= CAM_FULL_HEIGHT - PATCH_SIZE; y += STRIDE) {
+        for (int x = 0; x <= CAM_FULL_WIDTH - PATCH_SIZE; x += STRIDE) {
+            for (int j = 0; j < PATCH_SIZE; j++) {
+                for (int i = 0; i < PATCH_SIZE; i++) {
+                    uint8_t pix = cameraBufferFull[(y + j) * CAM_FULL_WIDTH + (x + i)];
+                    float val = pix / 255.0f;
+                    int scaled = (int)((val * 128.0f) - 128.0f);
+                    patchBuffer[j * PATCH_SIZE + i] = (signed char)(scaled);
+                }
+            }
+            // 2) Run inference on cluster
+            pi_cluster_send_task_to_cl(&cluster_dev, task);
+            // RunNetwork();
+            float confidence = ((float)Output_1[0] / 128.0f + 1.0f) / 2.0f;
+            if (confidence >= THRESHOLD) {
+                foundAny = 1;
+                DrawRectangle(cameraBufferFull, CAM_FULL_WIDTH, CAM_FULL_HEIGHT,
+                              x, y, PATCH_SIZE, PATCH_SIZE);
+            }
         }
+    }
+    if (!foundAny) {
+        cpxPrintToConsole(LOG_TO_CRTP, "No detections\n");
     }
 
     if (!foundAny)
@@ -390,26 +379,32 @@ static void camera_task(void *parameters)
         return;
     }
 
-    cameraBufferResized = (unsigned char *)pmsis_l2_malloc(CAM_WIDTH * CAM_HEIGHT);
-    if (!cameraBufferResized)
-    {
-        cpxPrintToConsole(LOG_TO_CRTP, "Failed to allocate cameraBufferResized\n");
-        return;
-    }
+    // cameraBufferResized = (unsigned char *)pmsis_l2_malloc(CAM_WIDTH * CAM_HEIGHT);
+    // if (!cameraBufferResized)
+    // {
+    //     cpxPrintToConsole(LOG_TO_CRTP, "Failed to allocate cameraBufferResized\n");
+    //     return;
+    // }
 
-    Output_1 = (signed char *)pmsis_l2_malloc(MAX_OBJECTS * sizeof(signed char));
+    Output_1 = (signed char *)pmsis_l2_malloc(sizeof(signed char));
     if (!Output_1)
     {
         cpxPrintToConsole(LOG_TO_CRTP, "Failed to allocate Output_1\n");
         return;
     }
-
-    Output_2 = (signed char *)pmsis_l2_malloc(4 * MAX_OBJECTS * sizeof(signed char));
-    if (!Output_2)
+    
+    patchBuffer = (signed char *)pmsis_l2_malloc(PATCH_SIZE * PATCH_SIZE);
+    if (!patchBuffer)
     {
-        cpxPrintToConsole(LOG_TO_CRTP, "Failed to allocate Output_2\n");
+        cpxPrintToConsole(LOG_TO_CRTP, "Failed to allocate patchBuffer\n");
         return;
     }
+    // Output_2 = (signed char *)pmsis_l2_malloc(4 * MAX_OBJECTS * sizeof(signed char));
+    // if (!Output_2)
+    // {
+    //     cpxPrintToConsole(LOG_TO_CRTP, "Failed to allocate Output_2\n");
+    //     return;
+    // }
 
     if (open_camera(&camera))
     {
