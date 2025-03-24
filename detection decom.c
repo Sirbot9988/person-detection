@@ -1,7 +1,8 @@
 /* 
 CURRENT ISSUES: 
-The bounding box is not being drawn on the image. The values of Output_1 and Output_2 are not changing.
-Connection to radio is not great. Possibly because the large amount of debug outputs and its frequency being sent may be limiting bandwidth. 
+CNN is not constructing, lets try optimizing for L2 memory.
+https://greenwaves-technologies.com/manuals_gap9/gap9_sdk_doc/html/source/tools/docs/autotiler.html#at-graph-control-code
+
 */
 
 #include "stdio.h"
@@ -16,17 +17,30 @@ Connection to radio is not great. Possibly because the large amount of debug out
 #include "detection.h"
 #include "detectionKernels.h"
 
-/* incl if code does not need L3 Flash . Otherwise detectionKernel will call L3 Flash leading to unknown refernece error. */
+// /* incl if code does not need L3 Flash . Otherwise detectionKernel will call L3 Flash leading to unknown refernece error. */
 AT_HYPERFLASH_FS_EXT_ADDR_TYPE detection_L3_Flash = 0;
+#define MODEL_WIDTH 81
+#define MODEL_HEIGHT 61
+#define CAM_WIDTH        324
+#define CAM_HEIGHT       244
 
-#define CAM_FULL_WIDTH   324
-#define CAM_FULL_HEIGHT  244
-#define MODEL_WIDTH        81
-#define MODEL_HEIGHT       61
-#define IMG_ORIENTATION  0x0101
+#define CHANNELS 1
+#define IO RGB888_IO
+#define CAT_LEN sizeof(uint32_t)
+
+#define __XSTR(__s) __STR(__s)
+#define __STR(__s) #__s
+
+
+#define IMG_ORIENTATION 0x0101
+uint8_t set_value2 = 1;
+uint8_t set_value3 = 16;
+uint8_t set_value4 = 1;
+//define max objects to detect, as defined in training
+#define MAX_OBJECTS      1
 
 #ifndef STACK_SIZE
-#define STACK_SIZE       (1024 * 2)
+#define STACK_SIZE       (1024 * 6)
 #endif
 
 #ifndef SLAVE_STACK_SIZE
@@ -34,11 +48,11 @@ AT_HYPERFLASH_FS_EXT_ADDR_TYPE detection_L3_Flash = 0;
 #endif
 
 #define LED_PIN          2
-#define THRESHOLD        0.5f
+#define THRESHOLD        0.2f  // Confidence threshold
 #define JPEG_BUFFER_SIZE (50 * 1024) // Adjust if needed
 
 static EventGroupHandle_t evGroup;
-#define CAPTURE_DONE_BIT (1 << 0)
+#define CAPTURE_DONE_BIT (1 open_camera_himax< 0)
 
 static int wifiConnected = 0;
 static int wifiClientConnected = 0;
@@ -48,7 +62,7 @@ static CPXPacket_t rxp;
 static CPXPacket_t txp;
 
 static unsigned char *cameraBufferFull;
-static unsigned char *cameraBufferResized; 
+static unsigned char *inputBuffer; // cameraBuffer normalized to [0..1]
 static signed char *Output_1; // Q7 ? Re-examine 
 
 static struct pi_device camera;
@@ -87,33 +101,39 @@ typedef enum
 static StreamerMode_t streamerMode = JPEG_ENCODING;
 
 // draw 255 (white) on the edges of the bounding box.
-static void DrawRectangle(unsigned char *img, int img_w, int img_h, int x, int y, int w, int h)
+static void DrawRectangle(unsigned char *img, int img_w, int img_h,
+                          int x, int y, int w, int h)
 {
+    /* This draws a white (255) rectangle boundary onto 'img' at coords (x,y,w,h). */
     int x2 = x + w;
     int y2 = y + h;
 
-    if (x < 0) x = 0;
-    if (y < 0) y = 0;
-    if (x2 >= img_w) x2 = img_w - 1;
-    if (y2 >= img_h) y2 = img_h - 1;
+    if (x < 0)   x = 0;
+    if (y < 0)   y = 0;
+    if (x2 >= img_w)  x2 = img_w - 1;
+    if (y2 >= img_h)  y2 = img_h - 1;
 
-    // Draw top and bottom edges
+    // Top & bottom edges
     for (int X = x; X <= x2; X++)
     {
-        if (y >= 0 && y < img_h) img[y * img_w + X] = 255;    // top edge
-        if (y2 >= 0 && y2 < img_h) img[y2 * img_w + X] = 255; // bottom edge
+        if (y >= 0 && y < img_h)
+            img[y * img_w + X] = 255;    // top edge
+        if (y2 >= 0 && y2 < img_h)
+            img[y2 * img_w + X] = 255;   // bottom edge
     }
-
-    // Draw left and right edges
+    // Left & right edges
     for (int Y = y; Y <= y2; Y++)
     {
-        if (x >= 0 && x < img_w) img[Y * img_w + x] = 255;     // left edge
-        if (x2 >= 0 && x2 < img_w) img[Y * img_w + x2] = 255;  // right edge
+        if (x >= 0 && x < img_w)
+            img[Y * img_w + x] = 255;    // left edge
+        if (x2 >= 0 && x2 < img_w)
+            img[Y * img_w + x2] = 255;   // right edge
     }
 }
 
 static void capture_done_cb(void *arg)
 {
+    printf( "Capture done callback triggered.\n");
     xEventGroupSetBits(evGroup, CAPTURE_DONE_BIT);
 }
 
@@ -142,15 +162,14 @@ static void rx_task(void *parameters)
             break;
         }
     }
-    return;
 }
 
 static void createImageHeaderPacket(CPXPacket_t *packet, uint32_t imgSize, StreamerMode_t imgType)
 {
     img_header_t *imgHeader = (img_header_t *)packet->data;
     imgHeader->magic = 0xBC;
-    imgHeader->width = CAM_FULL_WIDTH;
-    imgHeader->height = CAM_FULL_HEIGHT;
+    imgHeader->width = CAM_WIDTH;
+    imgHeader->height = CAM_HEIGHT;
     imgHeader->depth = 1;
     imgHeader->type = JPEG_ENCODING;
     imgHeader->size = imgSize;
@@ -195,88 +214,108 @@ static void setupWiFi(void)
     txp.dataLength = 2;
     cpxSendPacketBlocking(&txp);
 }
-
-static int open_camera(struct pi_device *device)
+static int open_camera_himax(struct pi_device *cam_device)
 {
-    struct pi_himax_conf cam_conf;
-    pi_himax_conf_init(&cam_conf);
-    cam_conf.format = PI_CAMERA_QVGA;
+  struct pi_himax_conf cam_conf;
 
-    pi_open_from_conf(device, &cam_conf);
-    if (pi_camera_open(device))
-        return -1;
+  pi_himax_conf_init(&cam_conf);
 
-    pi_camera_control(device, PI_CAMERA_CMD_START, 0);
-    uint8_t set_value = 3;
-    uint8_t reg_value;
-    pi_camera_reg_set(device, IMG_ORIENTATION, &set_value);
-    pi_time_wait_us(1000000);
-    pi_camera_reg_get(device, IMG_ORIENTATION, &reg_value);
+  cam_conf.format = PI_CAMERA_QVGA;
 
-    if (set_value != reg_value)
-    {
-        printf( "Failed to rotate camera image\n");
-        return -1;
-    }
+  pi_open_from_conf(cam_device, &cam_conf);
+  if (pi_camera_open(cam_device))
+    return -1;
 
-    pi_camera_control(device, PI_CAMERA_CMD_STOP, 0);
-    pi_camera_control(device, PI_CAMERA_CMD_AEG_INIT, 0);
-    return 0;
+    // rotate image
+  pi_camera_control(cam_device, PI_CAMERA_CMD_START, 0);
+  uint8_t set_value=3;
+  uint8_t reg_value;
+  pi_camera_reg_set(cam_device, IMG_ORIENTATION, &set_value);
+  pi_time_wait_us(1000000);
+  pi_camera_reg_get(cam_device, IMG_ORIENTATION, &reg_value);
+  if (set_value!=reg_value)
+  {
+    cpxPrintToConsole(LOG_TO_CRTP, "Failed to rotate camera image\n");
+    return -1;
+  }
+  pi_camera_control(cam_device, PI_CAMERA_CMD_STOP, 0);
+  pi_camera_control(cam_device, PI_CAMERA_CMD_AEG_INIT, 0);
+
+  return 0;
+}
+
+static int open_camera(struct pi_device *cam_device)
+{
+    return open_camera_himax(cam_device);
 }
 
 static void RunNetwork()
 {
-    __PREFIX(CNN)((signed char *)cameraBufferResized, Output_1);
+    // Run the CNN inference.
+    __PREFIX(CNN)(inputBuffer, Output_1);
 }
 
-static void resize_image(unsigned char *src, unsigned char *dst, int src_w, int src_h, int dst_w, int dst_h)
-{
-    int x_ratio = (int)((src_w << 16) / dst_w) + 1;
-    int y_ratio = (int)((src_h << 16) / dst_h) + 1;
-    for (int y = 0; y < dst_h; y++)
-    {
-        for (int x = 0; x < dst_w; x++)
-        {
-            int src_x = (x * x_ratio) >> 16;
-            int src_y = (y * y_ratio) >> 16;
-            dst[y * dst_w + x] = src[src_y * src_w + src_x];
-        }
-    }
-}
-
-static void cam_handler(void *arg)
-{
+static void cam_handler(void *arg) {
     (void)arg;
-    printf( "cam_handler called\n");
+    printf( "Entering cam_handler\n");
     pi_camera_control(&camera, PI_CAMERA_CMD_STOP, 0);
 
-    // Resize for inference
-    printf( "Resizing image\n");
-    resize_image(cameraBufferFull, cameraBufferResized, CAM_FULL_WIDTH, CAM_FULL_HEIGHT, MODEL_WIDTH, MODEL_HEIGHT);
+    // Resize and normalize the input buffer to 61x81
+    int new_width = 61;
+    int new_height = 81;
+    float scale_x = (float)CAM_WIDTH / new_width;
+    float scale_y = (float)CAM_HEIGHT / new_height;
 
-    // Run inference
-    printf( "Running neural network inference\n");
+    for (int y = 0; y < new_height; y++)
+    {
+        for (int x = 0; x < new_width; x++)
+        {
+            int src_x = (int)(x * scale_x);
+            int src_y = (int)(y * scale_y);
+            inputBuffer[y * new_width + x] = (signed char)cameraBufferFull[src_y * CAM_WIDTH + src_x] - 128;
+        }
+    }
+
+    printf( "sending inference\n");
+
     pi_cluster_send_task_to_cl(&cluster_dev, task);
 
-    // Process outputs (Q7)
-    printf( "Processing neural network outputs\n");
-    float x_min = ((float)Output_1[0] / 128.0f + 1.0f) / 2.0f;
-    float y_min = ((float)Output_1[1] / 128.0f + 1.0f) / 2.0f;
-    float x_max = ((float)Output_1[2] / 128.0f + 1.0f) / 2.0f;
-    float y_max = ((float)Output_1[3] / 128.0f + 1.0f) / 2.0f;
+    // Print Output_2 in Hex
+    printf( "CNN Output_1 (Hex): ");
+    printf( "%02X \n", (unsigned char)Output_1[0]);
+    printf( "%02X \n", (unsigned char)Output_1[1]);
+    printf( "%02X \n", (unsigned char)Output_1[2]);
+    printf( "%02X \n", (unsigned char)Output_1[3]);
+    printf( "First 10 bytes of normalized input buffer: ");
+    for (int i = 0; i < 10; i++) {
+        printf( "%02X ", inputBuffer[i]);
+    }
+    printf( "\n");
 
-    printf( "Detected Object: x_min=%.3f, y_min=%.3f, x_max=%.3f, y_max=%.3f\n",
-                      x_min, y_min, x_max, y_max);
+    for (int i = 0; i < 4; i++) {
+        printf( "Raw Output_1[%d]: %d\n", i, (int)Output_1[i]);
+    }
+    float x_c = ((float)Output_1[0] + 128) / 256;  // Normalize if using Q7
+    float y_c = ((float)Output_1[1] + 128) / 256;
+    float w_n = ((float)Output_1[2] + 128) / 256;
+    float h_n = ((float)Output_1[3] + 128) / 256;
 
-    // Convert normalized coordinates to pixel coordinates
-    int x = (int)(x_min * CAM_FULL_WIDTH);
-    int y = (int)(y_min * CAM_FULL_HEIGHT);
-    int w = (int)((x_max - x_min) * CAM_FULL_WIDTH);
-    int h = (int)((y_max - y_min) * CAM_FULL_HEIGHT);
+    printf( "Bounding box normalized: x=%.2f, y=%.2f, w=%.2f, h=%.2f\n", x_c, y_c, w_n, h_n);
+    // Convert to pixel coordinates
+    int px = ((x_c - w_n / 2.0f) * CAM_WIDTH);
+    int py = ((y_c - h_n / 2.0f) * CAM_HEIGHT);
+    int pw = (w_n * CAM_WIDTH);
+    int ph = (h_n * CAM_HEIGHT);
 
-    // bbox is written on cameraBufferFull for drawing onto the image
-    DrawRectangle(cameraBufferFull, CAM_FULL_WIDTH, CAM_FULL_HEIGHT, x, y, w, h);
+    printf( "Bounding box coordinates: px=%d, py=%d, pw=%d, ph=%d\n", px, py, pw, ph);
+    
+    int foundAny = 0;
+    DrawRectangle(cameraBufferFull, CAM_WIDTH, CAM_HEIGHT, px, py, pw, ph);
 
+    if (!foundAny)
+    {
+        printf( "No objects above threshold\n");
+    }
     if (wifiClientConnected == 1)
     {
         printf( "Encoding image as JPEG\n");
@@ -312,15 +351,15 @@ static void cam_handler(void *arg)
     else
     {
         printf( "No Wi-Fi client connected, skipping image send\n");
+        vTaskDelay(1000);
+
     }
-    vTaskDelay(1000); //add delay to let other tasks catch up
-    // Start next capture
+    
     printf( "Starting next image capture\n");
-    pi_camera_capture_async(&camera, cameraBufferFull, CAM_FULL_WIDTH * CAM_FULL_HEIGHT,
+    pi_camera_capture_async(&camera, cameraBufferFull, CAM_WIDTH * CAM_HEIGHT,
                             pi_task_callback(&task1, cam_handler, NULL));
     pi_camera_control(&camera, PI_CAMERA_CMD_START, 0);
 }
-
 static void hb_task(void *parameters)
 {
     (void)parameters;
@@ -338,15 +377,15 @@ static void hb_task(void *parameters)
 static void camera_task(void *parameters)
 {
     (void)parameters;
-    vTaskDelay(2000); 
 
     setupWiFi();
 
     printf( "Starting camera task...\n");
-
-    uint32_t resolution = CAM_FULL_WIDTH * CAM_FULL_HEIGHT;
+    /* Initialize Camera */
+    printf( "Opened Camera\n");
+    uint32_t resolution = CAM_WIDTH * CAM_HEIGHT;
     uint32_t captureSize = resolution * sizeof(unsigned char);
-
+    /* Set Camera Buffers */
     cameraBufferFull = (unsigned char *)pmsis_l2_malloc(captureSize);
     if (!cameraBufferFull)
     {
@@ -354,14 +393,14 @@ static void camera_task(void *parameters)
         return;
     }
 
-    cameraBufferResized = (unsigned char *)pmsis_l2_malloc(MODEL_WIDTH * MODEL_HEIGHT);
-    if (!cameraBufferResized)
+    /* Set CNN Buffers*/
+    inputBuffer = (unsigned char *)pmsis_l2_malloc(MODEL_WIDTH * MODEL_HEIGHT * sizeof(unsigned char));
+    if (inputBuffer == NULL)
     {
-        printf( "Failed to allocate cameraBufferResized\n");
+        printf( "Failed to allocate inputBuffer\n");
         return;
     }
-
-    Output_1 = (signed char *)pmsis_l2_malloc(4*sizeof(signed char)); //size to number of BB coordinates
+    Output_1 = (signed char *)pmsis_l2_malloc(4 * MAX_OBJECTS * sizeof(signed char));
     if (!Output_1)
     {
         printf( "Failed to allocate Output_1\n");
@@ -369,21 +408,22 @@ static void camera_task(void *parameters)
     }
 
 
-    // Initialize cluster
+    /* Configure CNN task */
     pi_cluster_conf_init(&cluster_conf);
-    pi_open_from_conf(&cluster_dev, &cluster_conf);
+    pi_open_from_conf(&cluster_dev, (void *)&cluster_conf);
     pi_cluster_open(&cluster_dev);
-
-    task = (struct pi_cluster_task *)pmsis_l2_malloc(sizeof(struct pi_cluster_task));
+    task = pmsis_l2_malloc(sizeof(struct pi_cluster_task));
     if (!task)
-    {
-        printf( "Failed to allocate cluster task\n");
-        return;
+    {  
+        printf( "failed to allocate memory for task\n");
     }
+    printf("Allocated memory for task\n");
+
     memset(task, 0, sizeof(struct pi_cluster_task));
     task->entry = &RunNetwork;
-    task->stack_size = STACK_SIZE;
-    task->slave_stack_size = SLAVE_STACK_SIZE;
+    task->stack_size = STACK_SIZE;             // defined in makefile
+    task->slave_stack_size = SLAVE_STACK_SIZE*4; // "
+    task->arg = NULL;
 
     int ret = __PREFIX(CNN_Construct)();
     if (ret)
@@ -393,22 +433,27 @@ static void camera_task(void *parameters)
     }
     printf( "Constructed CNN\n");
 
-    // Initialize JPEG encoder
+    /*Everything related to JPEG Encoder*/
     struct jpeg_encoder_conf enc_conf;
     jpeg_encoder_conf_init(&enc_conf);
-    enc_conf.width = CAM_FULL_WIDTH;
-    enc_conf.height = CAM_FULL_HEIGHT;
-    enc_conf.flags = 0;
-
+    enc_conf.width = CAM_WIDTH;    
+    
+    
+    
+    
+    
     if (jpeg_encoder_open(&encoder_struct, &enc_conf))
     {
         printf( "Failed to initialize JPEG encoder\n");
         return;
+    } else { 
+        printf( "Initialized JPEG encoder\n");
     }
 
     pi_buffer_init(&buffer, PI_BUFFER_TYPE_L2, cameraBufferFull);
-    pi_buffer_set_format(&buffer, CAM_FULL_WIDTH, CAM_FULL_HEIGHT, 1, PI_BUFFER_FORMAT_GRAY);
-
+    printf( "Initialized buffer\n");
+    pi_buffer_set_format(&buffer, CAM_WIDTH, CAM_HEIGHT, 1, PI_BUFFER_FORMAT_GRAY);
+    printf( "Set buffer format\n");
     header.size = 1024;
     header.data = pmsis_l2_malloc(1024);
     footer.size = 10;
@@ -420,20 +465,33 @@ static void camera_task(void *parameters)
     {
         printf( "Failed to allocate memory for JPEG structures\n");
         return;
+    } else { 
+        printf( "Allocated memory for JPEG structures\n");
     }
-
+    
     jpeg_encoder_header(&encoder_struct, &header, &headerSize);
+    printf( "Encoded header\n");
     jpeg_encoder_footer(&encoder_struct, &footer, &footerSize);
+    printf( "Encoded footer\n");
+    pi_camera_control(&camera, PI_CAMERA_CMD_STOP, 0);
+    printf( "Stopped camera\n");
+    // Initialize route once
+    cpxInitRoute(CPX_T_GAP8, CPX_T_WIFI_HOST, CPX_F_APP, &txp.route);
+    printf( "Initialized route\n");
+    
+    /* Stop Camera and init settings for it to work */
 
     pi_camera_control(&camera, PI_CAMERA_CMD_STOP, 0);
 
-    // Initialize route once
-    cpxInitRoute(CPX_T_GAP8, CPX_T_WIFI_HOST, CPX_F_APP, &txp.route);
+    pi_camera_reg_set(&camera, 0x2100, &set_value2); // AE_CTRL
+    pi_camera_reg_set(&camera, 0x0205, &set_value3); // ANALOG_GLOBAL_GAIN: 0x10 = 2x, 0x20 = 4x
+    pi_camera_reg_set(&camera, 0x0104, &set_value4); // This is needed for the camera to actually update its registers.
 
-    // Start first image capture
     pi_camera_capture_async(&camera, cameraBufferFull, resolution,
                             pi_task_callback(&task1, cam_handler, NULL));
+    printf( "Started first image capture\n");
     pi_camera_control(&camera, PI_CAMERA_CMD_START, 0);
+    printf( "Started camera\n");
 
     while (1)
     {
@@ -446,40 +504,51 @@ static void camera_task(void *parameters)
 
 void start_example(void)
 {
-    struct pi_uart_conf conf;
-    struct pi_device device;
-    pi_uart_conf_init(&conf);
-    conf.baudrate_bps = 115200;
+    pi_freq_set(PI_FREQ_DOMAIN_FC, FREQ_FC*1000*1000);
+    __pi_pmu_voltage_set(PI_PMU_DOMAIN_FC, 1200);
     if (open_camera(&camera))
     {
         printf( "Failed to open camera\n");
         return;
     }
-    printf( "Opened Camera\n");
-    pi_open_from_conf(&device, &conf);
-    if (pi_uart_open(&device))
+    struct pi_uart_conf uart_conf;
+    struct pi_device uart_device;
+    pi_uart_conf_init(&uart_conf);
+    uart_conf.baudrate_bps = 115200;
+
+    pi_open_from_conf(&uart_device, &uart_conf);
+    if (pi_uart_open(&uart_device))
     {
         printf("[UART] open failed!\n");
         pmsis_exit(-1);
+    } else { 
+        printf("[UART] Opened");
     }
 
     cpxInit();
     cpxEnableFunction(CPX_F_WIFI_CTRL);
-    printf( "-- Detection JPEG example with Bounding Box --\n");
-  
-    
+    printf( "-- PERSON DETECTION --\n");
 
     evGroup = xEventGroupCreate();
-
+    BaseType_t xTask;
     // Heartbeat task
-    xTaskCreate(hb_task, "hb_task", configMINIMAL_STACK_SIZE * 2, NULL, tskIDLE_PRIORITY + 1, NULL);
+    xTask = xTaskCreate(hb_task, "hb_task", configMINIMAL_STACK_SIZE * 2, NULL, tskIDLE_PRIORITY + 1, NULL);
+    if (xTask != pdPASS)
+    {
+      cpxPrintToConsole(LOG_TO_CRTP, "HB task did not start !\n");
+      pmsis_exit(-1);
+    }
 
     // RX task
-    xTaskCreate(rx_task, "rx_task", configMINIMAL_STACK_SIZE * 2, NULL, tskIDLE_PRIORITY + 1, NULL);
-
+    xTask = xTaskCreate(rx_task, "rx_task", configMINIMAL_STACK_SIZE * 2, NULL, tskIDLE_PRIORITY + 1, NULL);
+    if (xTask != pdPASS)
+    {
+      cpxPrintToConsole(LOG_TO_CRTP, "RX task did not start !\n");
+      pmsis_exit(-1);
+    }
     // Camera task
-    if (xTaskCreate(camera_task, "camera_task", configMINIMAL_STACK_SIZE * 16,
-                    NULL, tskIDLE_PRIORITY + 1, NULL) != pdPASS)
+    xTask = xTaskCreate(camera_task, "camera_task", configMINIMAL_STACK_SIZE * 30, NULL, tskIDLE_PRIORITY + 1, NULL);
+    if(xTask != pdPASS)
     {
         printf( "camera_task did not start!\n");
         pmsis_exit(-1);
@@ -494,7 +563,5 @@ void start_example(void)
 int main(void)
 {
     pi_bsp_init();
-    pi_freq_set(PI_FREQ_DOMAIN_FC, 250000000);
-    __pi_pmu_voltage_set(PI_PMU_DOMAIN_FC, 1200);
     return pmsis_kickoff((void *)start_example);
 }

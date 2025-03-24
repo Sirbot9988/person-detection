@@ -1,7 +1,7 @@
 set debug true
 #imageformat input_1 rgb888
 #set input_transpose True
-imageformat input_1 bw8 offset_int8
+# imageformat input_1 bw8 offset_int8
 #set adjust_order True
 #set input_width 324
 #set input_height 244
@@ -11,7 +11,7 @@ adjust
 fusions --scale8
 # imageformat input_1 rgb888 offset_int8
 # imageformat input_1 rgb888 shift_int8
-aquant samples/*
+aquant samples/* --scheme SQ8
 #-T -f 16
 #qshow
 adjust

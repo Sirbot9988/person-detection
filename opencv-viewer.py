@@ -36,6 +36,7 @@
 #  Note that the demo firmware is continously streaming JPEG files so a single
 #  JPEG image is taken from the stream using the JPEG start-of-frame (0xFF 0xD8)
 #  and the end-of-frame (0xFF 0xD9).
+import cv2
 
 import argparse
 import time
@@ -66,8 +67,6 @@ def rx_bytes(size):
   while len(data) < size:
     data.extend(client_socket.recv(size-len(data)))
   return data
-
-import cv2
 
 stream_w = 324
 stream_h = 244

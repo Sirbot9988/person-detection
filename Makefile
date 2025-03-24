@@ -7,26 +7,25 @@
 ifndef GAP_SDK_HOME
   $(error Source sourceme in gap_sdk first)
 endif
-
 MODEL_PREFIX = detection
 
+
 # Set variables
-io=uart
+io=host
+# io=uart
 PMSIS_OS = freertos
 
 APP_CFLAGS += -DMODEL_QUANTIZED
 
-# Load the model pre-quantized by TensorFlow
-# If set to false, will quantize using images from the /samples folder
+# load the model pre-quantized by TensorFlow
+# if set to false, will quantize using images from the /samples folder
 MODEL_PREQUANTIZED = false
 
 ifeq "$(MODEL_PREQUANTIZED)" "true"
   NNTOOL_EXTRA_FLAGS = -q
   NNTOOL_SCRIPT=model/nntool_script
-  TRAINED_MODEL=model/detection.onnx
 else
   NNTOOL_SCRIPT=model/nntool_script_q
-  TRAINED_MODEL=model/detection.onnx
 endif
 
 QUANT_BITS=8
@@ -38,6 +37,7 @@ $(info Building GAP8 mode with $(QUANT_BITS) bit quantization)
 MODEL_SUFFIX = _SQ8BIT
 
 include model_decl.mk
+TRAINED_MODEL=model/detection.tflite
 
 CLUSTER_STACK_SIZE?=6096
 CLUSTER_SLAVE_STACK_SIZE?=1024
@@ -59,26 +59,18 @@ PULP_APP = detection
 USE_PMSIS_BSP=1
 
 APP = detection
+APP_SRCS += detection.c ../../../lib/cpx/src/com.c ../../../lib/cpx/src/cpx.c $(MODEL_GEN_C) $(MODEL_COMMON_SRCS) $(CNN_LIB) 
 
-# Application source files
-# Include your main inference + streaming code and CPX sources
-APP_SRCS += detection.c \
-            ../../../lib/cpx/src/com.c \
-            ../../../lib/cpx/src/cpx.c \
-            $(MODEL_GEN_C) $(MODEL_COMMON_SRCS) $(CNN_LIB)
-APP_CFLAGS += -g -O3 -mno-memcpy -fno-tree-loop-distribute-patterns
+APP_CFLAGS += -g -Os -mno-memcpy -fno-tree-loop-distribute-patterns
 APP_CFLAGS += -I. -I$(MODEL_COMMON_INC) -I$(TILER_EMU_INC) -I$(TILER_INC) $(CNN_LIB_INCLUDE) -I$(realpath $(MODEL_BUILD))
 APP_CFLAGS += -DPERF -DAT_MODEL_PREFIX=$(MODEL_PREFIX) $(MODEL_SIZE_CFLAGS)
 APP_CFLAGS += -DSTACK_SIZE=$(CLUSTER_STACK_SIZE) -DSLAVE_STACK_SIZE=$(CLUSTER_SLAVE_STACK_SIZE)
-APP_CFLAGS += -DconfigUSE_TIMERS=1 -DINCLUDE_xTimerPendFunctionCall=1 -DFS_PARTITIONTABLE_OFFSET=0x40000
-APP_CFLAGS += -DFREQ_FC=$(FREQ_FC) -DFREQ_CL=$(FREQ_CL) -DTXQ_SIZE=$(CPX_TXQ_SIZE) -DRXQ_SIZE=$(CPX_RXQ_SIZE)
+APP_CFLAGS += -DconfigUSE_TIMERS=1 -DINCLUDE_xTimerPendFunctionCall=1 
+APP_CFLAGS +=  -DFREQ_FC=$(FREQ_FC) -DFREQ_CL=$(FREQ_CL) -DTXQ_SIZE=$(CPX_TXQ_SIZE) -DRXQ_SIZE=$(CPX_RXQ_SIZE) 
 APP_INC = ../../../lib/cpx/inc
-APP_CFLAGS += -I./tools
 
 READFS_FILES=$(abspath $(MODEL_TENSORS))
-
 CONFIG_GAP_LIB_JPEG = 1
-
 
 all:: model
 
@@ -89,3 +81,4 @@ $(info APP_SRCS... $(APP_SRCS))
 $(info APP_CFLAGS... $(APP_CFLAGS))
 RUNNER_CONFIG = $(CURDIR)/config.ini
 include $(RULES_DIR)/pmsis_rules.mk
+

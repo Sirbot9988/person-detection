@@ -7,7 +7,7 @@
 MODEL_SUFFIX?=
 
 MODEL_PREFIX?=
-
+ONNX = 0
 # The training of the model is slightly different depending on
 # the quantization. This is because in 8 bit mode we used signed
 # 8 bit so the input to the model needs to be shifted 1 bit
@@ -23,9 +23,13 @@ endif
 
 MODEL_PYTHON=python3
 
-TRAINED_MODEL ?= model/$(MODEL_PREFIX).onnx
-MODEL_PATH     = $(MODEL_BUILD)/$(MODEL_PREFIX).onnx
-
+ifeq ($(ONNX), 1)
+  TRAINED_MODEL ?= model/$(MODEL_PREFIX).onnx
+  MODEL_PATH     = $(MODEL_BUILD)/$(MODEL_PREFIX).onnx
+else
+  TRAINED_MODEL ?= model/$(MODEL_PREFIX).tflite
+  MODEL_PATH     = $(MODEL_BUILD)/$(MODEL_PREFIX).tflite
+endif
 MODEL_COMMON ?= common
 MODEL_COMMON_INC ?= $(GAP_SDK_HOME)/libs/gap_lib/include
 MODEL_COMMON_SRC ?= $(GAP_SDK_HOME)/libs/gap_lib/img_io
