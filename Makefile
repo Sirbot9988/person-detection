@@ -28,7 +28,7 @@ else
   NNTOOL_SCRIPT=model/nntool_script_q
 endif
 
-QUANT_BITS=8
+QUANT_BITS=16
 BUILD_DIR=BUILD
 MODEL_SQ8=1
 

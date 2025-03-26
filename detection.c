@@ -87,28 +87,37 @@ typedef enum
 static StreamerMode_t streamerMode = JPEG_ENCODING;
 
 // draw 255 (white) on the edges of the bounding box.
-static void DrawRectangle(unsigned char *img, int img_w, int img_h, int x, int y, int w, int h)
+static void DrawRectangleNormalized(unsigned char *img, int img_w, int img_h,
+    float x_center, float y_center, float box_width, float box_height)
 {
-    int x2 = x + w;
-    int y2 = y + h;
+    // Convert normalized coordinates to pixel coordinates.
+    int x_min = (int)((x_center - box_width / 2.0f) * img_w);
+    int y_min = (int)((y_center - box_height / 2.0f) * img_h);
+    int x_max = (int)((x_center + box_width / 2.0f) * img_w);
+    int y_max = (int)((y_center + box_height / 2.0f) * img_h);
 
-    if (x < 0) x = 0;
-    if (y < 0) y = 0;
-    if (x2 >= img_w) x2 = img_w - 1;
-    if (y2 >= img_h) y2 = img_h - 1;
+    // Clamp coordinates to image boundaries.
+    if (x_min < 0) x_min = 0;
+    if (y_min < 0) y_min = 0;
+    if (x_max >= img_w) x_max = img_w - 1;
+    if (y_max >= img_h) y_max = img_h - 1;
 
-    // Draw top and bottom edges
-    for (int X = x; X <= x2; X++)
+    // Draw top and bottom edges.
+    for (int x = x_min; x <= x_max; x++)
     {
-        if (y >= 0 && y < img_h) img[y * img_w + X] = 255;    // top edge
-        if (y2 >= 0 && y2 < img_h) img[y2 * img_w + X] = 255; // bottom edge
+    if (y_min >= 0 && y_min < img_h)
+    img[y_min * img_w + x] = 255;  // Top edge
+    if (y_max >= 0 && y_max < img_h)
+    img[y_max * img_w + x] = 255;  // Bottom edge
     }
 
-    // Draw left and right edges
-    for (int Y = y; Y <= y2; Y++)
+    // Draw left and right edges.
+    for (int y = y_min; y <= y_max; y++)
     {
-        if (x >= 0 && x < img_w) img[Y * img_w + x] = 255;     // left edge
-        if (x2 >= 0 && x2 < img_w) img[Y * img_w + x2] = 255;  // right edge
+    if (x_min >= 0 && x_min < img_w)
+    img[y * img_w + x_min] = 255;  // Left edge
+    if (x_max >= 0 && x_max < img_w)
+    img[y * img_w + x_max] = 255;  // Right edge
     }
 }
 
@@ -260,23 +269,17 @@ static void cam_handler(void *arg)
 
     // Process outputs (Q7)
     printf( "Processing neural network outputs\n");
-    float x_min = ((float)Output_1[0] / 128.0f + 1.0f) / 2.0f;
-    float y_min = ((float)Output_1[1] / 128.0f + 1.0f) / 2.0f;
-    float x_max = ((float)Output_1[2] / 128.0f + 1.0f) / 2.0f;
-    float y_max = ((float)Output_1[3] / 128.0f + 1.0f) / 2.0f;
+    float x_center = ((float)Output_1[0] / 128.0f + 1.0f) / 2.0f;
+    float y_center = ((float)Output_1[1] / 128.0f + 1.0f) / 2.0f;
+    float box_width = ((float)Output_1[2] / 128.0f + 1.0f) / 2.0f;
+    float box_height = ((float)Output_1[3] / 128.0f + 1.0f) / 2.0f;
 
-    printf( "Detected Object: x_min=%.3f, y_min=%.3f, x_max=%.3f, y_max=%.3f\n",
-                      x_min, y_min, x_max, y_max);
-
-    // Convert normalized coordinates to pixel coordinates
-    int x = (int)(x_min * CAM_FULL_WIDTH);
-    int y = (int)(y_min * CAM_FULL_HEIGHT);
-    int w = (int)((x_max - x_min) * CAM_FULL_WIDTH);
-    int h = (int)((y_max - y_min) * CAM_FULL_HEIGHT);
+    printf( "Detected Object: x_center=%.3f, y_center=%.3f, box_width=%.3f, box_height=%.3f\n",
+                      x_center, y_center, box_width, box_height);
 
     // bbox is written on cameraBufferFull for drawing onto the image
-    DrawRectangle(cameraBufferFull, CAM_FULL_WIDTH, CAM_FULL_HEIGHT, x, y, w, h);
-
+    DrawRectangleNormalized(cameraBufferFull, CAM_FULL_WIDTH, CAM_FULL_HEIGHT,
+        x_center, y_center, box_width, box_height);
     if (wifiClientConnected == 1)
     {
         printf( "Encoding image as JPEG\n");
@@ -354,7 +357,7 @@ static void camera_task(void *parameters)
         return;
     }
 
-    cameraBufferResized = (unsigned char *)pmsis_l2_malloc(MODEL_WIDTH * MODEL_HEIGHT);
+    cameraBufferResized = (unsigned char *)pmsis_l2_malloc(MODEL_WIDTH * MODEL_HEIGHT * sizeof(unsigned char));
     if (!cameraBufferResized)
     {
         printf( "Failed to allocate cameraBufferResized\n");
